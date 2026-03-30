@@ -26,6 +26,11 @@ class QueryResponse(BaseModel):
     context_items: int
 
 
+class QueryContextResponse(BaseModel):
+    context: str
+    context_items: int
+
+
 class GraphExploreRequest(BaseModel):
     repo_id: str
     qualified_name: str

@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import os
+import warnings
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+
+# Suppress annoying console noise from dependencies (Chroma telemetry, LangChain deprecations, Tree-sitter futures)
+# os.environ["CHROMA_TELEMETRY_DISABLED"] = "1"
+# warnings.filterwarnings("ignore", category=DeprecationWarning)
+# warnings.filterwarnings("ignore", category=FutureWarning)
+# warnings.filterwarnings("ignore", category=UserWarning)
+
 
 from app.api.routers.health import router as health_router
 from app.api.routers.ingest import router as ingest_router

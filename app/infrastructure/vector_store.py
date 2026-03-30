@@ -19,13 +19,15 @@ def _embeddings() -> HuggingFaceEmbeddings:
     )
 
 
+import chromadb
+
 @lru_cache(maxsize=32)
 def _chroma_for_repo(repo_id: str) -> Chroma:
+    client = chromadb.PersistentClient(path=settings.chroma_dir)
     return Chroma(
+        client=client,
         collection_name=f"reporover_{repo_id}",
         embedding_function=_embeddings(),
-        persist_directory=settings.chroma_dir,
-        client_settings=ChromaSettings(anonymized_telemetry=False),
     )
 
 
@@ -46,3 +48,12 @@ class VectorStore:
 
     def as_retriever(self, top_k: int) -> VectorStoreRetriever:
         return self._chroma.as_retriever(search_kwargs={"k": top_k})
+
+    def get_documents_by_qns(self, qns: list[str]) -> list[str]:
+        if not qns:
+            return []
+        try:
+            results = self._chroma.get(where={"qualified_name": {"$in": qns}})
+            return results.get("documents", []) or []
+        except Exception:
+            return []

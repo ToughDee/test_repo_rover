@@ -52,3 +52,26 @@ def snip_around_text(text: str, needle: str, max_len: int = 900) -> str:
     start = max(0, idx - 200)
     end = min(len(text), idx + 600)
     return text[start:end]
+
+def graph_get_call_flows(
+    neo4j: Neo4jClient,
+    repo_id: str,
+    qualified_names: list[str],
+    max_depth: int = 4,
+) -> list[str]:
+    if not qualified_names:
+        return []
+    
+    q = f"""
+    MATCH path = (s:Function {{repo_id: $repo_id}})-[:CALLS*1..{max_depth}]->(n:Function)
+    WHERE s.qualified_name IN $qns
+    RETURN [node in nodes(path) | node.name] AS call_chain
+    """
+    with neo4j.driver.session() as sess:
+        res = sess.run(q, repo_id=repo_id, qns=qualified_names)
+        out: list[str] = []
+        for r in res:
+            chain = r.get("call_chain")
+            if chain:
+                out.append(" -> ".join(chain))
+        return out[:50]
