@@ -22,18 +22,26 @@ class IndexedRepo:
 
 
 def iter_code_files(repo_root: Path) -> list[Path]:
+    import os
     exts = set(EXT_TO_LANG.keys())
     out: list[Path] = []
-    for p in repo_root.rglob("*"):
-        if not p.is_file():
-            continue
-        if p.suffix.lower() not in exts:
-            continue
-        # Skip common heavy folders
-        parts = {x.lower() for x in p.parts}
-        if {"node_modules", ".git", ".venv", "dist", "build"} & parts:
-            continue
-        out.append(p)
+    
+    print(f"DEBUG: Indexer scanning root: {repo_root}")
+    # Convert Path to string for os.walk
+    root_str = str(repo_root.resolve())
+    
+    for root, dirs, files in os.walk(root_str):
+        # Mutate 'dirs' to skip directories we don't like
+        # This prevents os.walk from even entering node_modules, .git, etc.
+        skip_dirs = {".work", ".chroma", "node_modules", ".git", ".venv", "dist", "build"}
+        dirs[:] = [d for d in dirs if d.lower() not in skip_dirs]
+        
+        for file in files:
+            p = Path(root) / file
+            if p.suffix.lower() in exts:
+                out.append(p)
+                
+    print(f"DEBUG: Indexer found {len(out)} files.")
     return out
 
 

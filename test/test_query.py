@@ -1,4 +1,10 @@
 import asyncio
+import sys
+from pathlib import Path
+
+# Add project root to sys.path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 from app.infrastructure.neo4j_client import Neo4jClient
 from app.services.query_service import get_query_context
 
@@ -7,8 +13,8 @@ async def main():
     try:
         res = await get_query_context(
             neo4j=neo4j,
-            repo_id="test_repo_rover",
-            question="What is the backend login flow?",
+            repo_id="demo",
+            question="What is the code flow for when an image is uploaded, how is it tagged?",
             top_k=8
         )
         # Ensure safe printing on Windows CLI

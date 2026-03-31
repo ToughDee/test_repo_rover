@@ -15,8 +15,7 @@ def graph_expand_neighbors(
     q = f"""
     MATCH (s {{repo_id: $repo_id}})
     WHERE s.qualified_name IN $qns
-    CALL {{
-      WITH s
+    CALL (s) {{
       MATCH (s)-[:CALLS|DEFINES*1..{d}]-(n)
       RETURN DISTINCT n.qualified_name AS qn
     }}
