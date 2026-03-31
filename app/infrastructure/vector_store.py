@@ -1,11 +1,12 @@
-from __future__ import annotations
-
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 
-from chromadb.config import Settings as ChromaSettings
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+# Disable noisy Chroma telemetry
+os.environ["CHROMA_TELEMETRY"] = "false"
+
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
 from langchain_core.vectorstores import VectorStoreRetriever
 
 from app.core.settings import settings

@@ -16,19 +16,20 @@ from app.repos.registry import get_repo_root
 
 
 class QueryPlan(BaseModel):
-    search_vector: str = Field(description="The semantic keywords for vector search. Do NOT include path filters here.")
+    search_vector: str = Field(
+        description="A detailed, technical search pattern. Instead of keywords, generate a highly descriptive string of what the target code should contain (e.g., 'Implementation of JWT authentication and password hashing')."
+    )
     intent: Literal["flow", "usage", "general"] = Field(description="The structural intent of the query.")
-    include_paths: list[str] = Field(description="Substrings that must be present in the file path (e.g., '.py', 'backend', 'src/'). Empty means all.")
-    exclude_paths: list[str] = Field(description="Substrings that must NOT be present in the file path (e.g., '.tsx', 'frontend', 'tests/').")
     target_symbol: str | None = Field(None, description="If intent is usage, the symbol being asked about (e.g. 'authenticate_user').")
 
 from langchain_core.output_parsers import PydanticOutputParser
 
 _PLANNER_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", "You are a query optimizer. Analyze the user's codebase query to extract the intent and target file paths.\n"
+    ("system", "You are a senior technical architect. Your goal is to rewrite the user's question into a highly effective vector search query.\n\n"
+               "For the 'search_vector' field, do NOT just repeat the user's words. Instead, generate a detailed technical description or a 'hypothetical code snippet' that describes what we are looking for. \n"
+               "Example: If the user asks 'How does login work?', rewrite it as 'Implementation of user authentication, login routes, password verification, and session management.'\n\n"
                "1. If they ask about 'code flow', 'execution path', 'mechanism', or 'how X works', set intent to 'flow'.\n"
-               "2. If they ask 'where is X used' or 'who calls X', set it to 'usage' and extract the symbol name to target_symbol.\n"
-               "3. Use clues like 'frontend', 'backend', 'client', or 'server'. For 'backend', add common server folders/extensions to 'include_paths' (e.g., 'server/', 'api/', 'backend/', '.py', '.java', '.go') and exclude client code in 'exclude_paths' (e.g., 'frontend/', 'client/', '.tsx', '.jsx'). For 'frontend', do the reverse. If no specific area is requested, leave them empty.\n\n"
+               "2. If they ask 'where is X used' or 'who calls X', set it to 'usage' and extract the symbol name to target_symbol.\n\n"
                "{format_instructions}"),
     ("human", "{question}")
 ])
@@ -36,7 +37,7 @@ _PLANNER_PROMPT = ChatPromptTemplate.from_messages([
 async def _rewrite_step(state: dict) -> dict:
     question = state["question"]
     if not settings.llm_api_key:
-        plan = QueryPlan(search_vector=question, intent="general", include_paths=[], exclude_paths=[], target_symbol=None)
+        plan = QueryPlan(search_vector=question, intent="general", target_symbol=None)
         return {**state, "plan": plan}
         
     try:
@@ -49,7 +50,7 @@ async def _rewrite_step(state: dict) -> dict:
     except Exception as e:
         import traceback
         traceback.print_exc()
-        plan = QueryPlan(search_vector=question, intent="general", include_paths=[], exclude_paths=[], target_symbol=None)
+        plan = QueryPlan(search_vector=question, intent="general", target_symbol=None)
         
     return {**state, "plan": plan}
 
@@ -69,13 +70,6 @@ async def _retrieve_step(state: dict) -> dict:
             break
             
         md = d.metadata or {}
-        fp = md.get("file_path", "").replace("\\", "/")
-        
-        if plan.exclude_paths and any(excl in fp for excl in plan.exclude_paths):
-            continue
-        if plan.include_paths and not any(incl in fp for incl in plan.include_paths):
-            continue
-            
         hits.append(
             {
                 "id": getattr(d, "id", None) or "",
@@ -102,7 +96,13 @@ def _enrich_step(state: dict) -> dict:
     context_parts = list(state["context_parts"])
     plan: QueryPlan = state["plan"]
 
-    expanded = graph_expand_neighbors(neo4j, repo_id=repo_id, qualified_names=state["seed_qns"], depth=1)
+    # Expand the graph to 2 hops deep to find deeper logic (e.g., helpers and utilities)
+    expanded = graph_expand_neighbors(neo4j, repo_id=repo_id, qualified_names=state["seed_qns"], depth=2)
+    
+    # Sort neighbors to prioritize "internal" project symbols over external library calls
+    internal_neighbors = [qn for qn in expanded if "::external::" not in qn]
+    external_neighbors = [qn for qn in expanded if "::external::" in qn]
+    sorted_neighbors = internal_neighbors + external_neighbors
 
     if plan.intent == "usage":
         symbol_name = plan.target_symbol
@@ -129,10 +129,11 @@ def _enrich_step(state: dict) -> dict:
         if flows:
             context_parts.append("Function Call Flows:\n" + "\n".join(flows[:20]))
 
-    if expanded:
-        context_parts.append("Graph-expanded symbols:\n" + "\n".join(expanded[:50]))
+    if sorted_neighbors:
+        context_parts.append("Graph-expanded symbols:\n" + "\n".join(sorted_neighbors[:50]))
         vs = VectorStore.from_settings(repo_id)
-        neighbor_docs = vs.get_documents_by_qns(expanded[:5])
+        # Pull source code for the top 10 internal/relevant neighbors
+        neighbor_docs = vs.get_documents_by_qns(sorted_neighbors[:10])
         if neighbor_docs:
             context_parts.append("Source code for key neighbors:\n" + "\n\n---\n\n".join(neighbor_docs))
 
