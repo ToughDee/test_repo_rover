@@ -12,6 +12,8 @@ class IndexedFile:
     text: str
     symbols: list[Symbol]
     imports: list[str]
+    resolved_imports: list[str]
+    identifiers: set[str]
 
 
 @dataclass(frozen=True)
@@ -45,14 +47,19 @@ def iter_code_files(repo_root: Path) -> list[Path]:
     return out
 
 
-def index_repo(repo_id: str, repo_root: Path) -> IndexedRepo:
+def index_repo(repo_id: str, repo_root: Path, target_files: list[str] | None = None) -> IndexedRepo:
     files: list[IndexedFile] = []
 
-    for fp in iter_code_files(repo_root):
-        s, txt, imports = extract_symbols(fp, repo_id=repo_id, repo_root=repo_root)
+    if target_files is not None:
+        fps = [repo_root / p for p in target_files if (repo_root / p).is_file()]
+    else:
+        fps = iter_code_files(repo_root)
+
+    for fp in fps:
+        s, txt, imports, resolved_imports, identifiers = extract_symbols(fp, repo_id=repo_id, repo_root=repo_root)
         rel = str(fp.resolve().relative_to(repo_root.resolve())).replace("\\", "/")
         if s or txt:
-            files.append(IndexedFile(rel_path=rel, text=txt, symbols=s, imports=imports))
+            files.append(IndexedFile(rel_path=rel, text=txt, symbols=s, imports=imports, resolved_imports=resolved_imports, identifiers=identifiers))
 
     return IndexedRepo(repo_id=repo_id, repo_root=repo_root, files=files)
 

@@ -10,7 +10,6 @@ from app.infrastructure.neo4j_client import Neo4jClient
 from app.infrastructure.vector_store import VectorStore
 from app.ingestion.ast_extract import EXT_TO_LANG, Symbol, extract_symbols
 from app.ingestion.indexer import index_repo
-from app.ingestion.text_scan import extract_identifiers
 from app.repos.sources import resolve_repo_source
 from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 
@@ -44,9 +43,21 @@ class IngestResult:
     symbols_indexed: int
 
 
-def ingest_repo(neo4j: Neo4jClient, repo_id: str, source: str, branch: str | None) -> IngestResult:
+def ingest_repo(
+    neo4j: Neo4jClient, 
+    repo_id: str, 
+    source: str, 
+    branch: str | None,
+    added_or_modified_files: list[str] | None = None,
+    deleted_files: list[str] | None = None,
+) -> IngestResult:
     resolved = resolve_repo_source(repo_id=repo_id, source=source, branch=branch)
-    indexed = index_repo(repo_id=repo_id, repo_root=resolved.root_dir)
+    
+    if deleted_files:
+        neo4j.delete_files(repo_id, deleted_files)
+        # TODO: delete from VectorStore in the future
+        
+    indexed = index_repo(repo_id=repo_id, repo_root=resolved.root_dir, target_files=added_or_modified_files)
 
     vs = VectorStore.from_settings(repo_id=repo_id)
     ids: list[str] = []
@@ -60,8 +71,10 @@ def ingest_repo(neo4j: Neo4jClient, repo_id: str, source: str, branch: str | Non
 
     for f in indexed.files:
         neo4j.upsert_file(repo_id=repo_id, path=f.rel_path)
-        neo4j.add_imports(repo_id=repo_id, file_path=f.rel_path, imports=f.imports)
         for sym in f.symbols:
+            all_symbols.append(sym)
+            # Best-effort: if multiple symbols share the same name, keep the first.
+            name_to_qn.setdefault(sym.name, sym.qualified_name)
             all_symbols.append(sym)
             # Best-effort: if multiple symbols share the same name, keep the first.
             name_to_qn.setdefault(sym.name, sym.qualified_name)
@@ -75,10 +88,14 @@ def ingest_repo(neo4j: Neo4jClient, repo_id: str, source: str, branch: str | Non
             file_path=sym.file_path,
         )
 
-    # CALLS edges: only from the function that actually contains the call sites.
+    # Edges: CALLS, RESOLVES_TO, MENTIONS
     for sym in all_symbols:
         if sym.kind == "function" and sym.calls:
             neo4j.add_calls(repo_id=repo_id, caller_qn=sym.qualified_name, callees=sym.calls)
+
+    for f in indexed.files:
+        if hasattr(f, 'resolved_imports') and f.resolved_imports:
+            neo4j.add_resolved_imports(repo_id=repo_id, file_path=f.rel_path, target_fqns=f.resolved_imports)
 
     # Generate embeddings per symbol using intelligent code splitting
     file_text_by_path = {f.rel_path: f.text for f in indexed.files}
@@ -133,9 +150,9 @@ def ingest_repo(neo4j: Neo4jClient, repo_id: str, source: str, branch: str | Non
                 )
 
     # Mentions edges (file -> symbol) so "where is X used?" works in MVP.
-    # Simple: tokenize identifiers in each file and link any symbol names found.
+    # We now use AST-based identifiers extracted directly during parsing.
     for f in indexed.files:
-        idents = extract_identifiers(f.text or "")
+        idents = f.identifiers
         mentioned_qns = [qn for name, qn in name_to_qn.items() if name in idents]
         # Avoid self-only noise: if a file only "mentions" the symbols it defines, still keep it
         # (imports often appear at top; usage is in same file for utils).

@@ -1,45 +1,60 @@
-# RepoRover (GraphRAG for Codebases)
+# RepoRover (Agentic Codebase Intelligence)
 
-RepoRover ingests local or remote Git repositories, extracts code structure (AST), builds a Neo4j code graph, adds embeddings for semantic search, and answers questions using hybrid retrieval + an API-based LLM.
+RepoRover is a decoupled, microservices-based intelligence platform for analyzing codebases. It extracts code structure via Tree-Sitter ASTs, builds a semantic Knowledge Graph in Neo4j, and uses an autonomous LangGraph Agent to answer deep architectural questions.
 
-## Quickstart (Neo4j Aura + API)
+## Architecture
 
-1) Create a free Neo4j Aura DB (no Docker):
+The system has been refactored into three distinct layers:
+1. **Python AI Worker (`app/`)**: A FastAPI microservice handling heavy AST extraction, incremental graph ingestion, and the LangGraph Agent reasoning loop.
+2. **Node.js Orchestrator (`orchestrator/`)**: An Express.js backend that manages state (MongoDB), handles incremental file diffing, and routes API requests to the Python worker.
+3. **React Frontend (`frontend/`)**: A Vite-powered React UI providing a workspace dashboard and an interactive 2D Graph Explorer.
 
-- Create a DB and copy:
-  - **Connection URI** (looks like `neo4j+s://...`)
-  - **Username** (often `neo4j`)
-  - **Password**
- 
-2) Create a Python venv and install deps:
+## Quickstart
 
+### Prerequisites
+- Neo4j Aura DB (or local Neo4j instance)
+- MongoDB (or MongoDB Atlas)
+- Node.js (v18+)
+- Python 3.10+
+
+### 1. Setup Python Worker (FastAPI)
 ```bash
-cd repo-rover
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-3) Configure env:
-
-```bash
 copy .env.example .env
 ```
-
-Edit `repo-rover/.env` and set:
-- `NEO4J_URI` to your Aura **Connection URI**
-- `NEO4J_USER` and `NEO4J_PASSWORD` to your Aura credentials
-- `LLM_API_KEY` (e.g. Groq) and optionally `LLM_BASE_URL`.
-
-4) Run the API (from the repository root):
-
+Ensure your `.env` contains your `NEO4J_URI`, `NEO4J_PASSWORD`, and `OPENAI_API_KEY` (or equivalent).
+Start the worker:
 ```bash
-uvicorn app.main:app --reload --port 8000
+uvicorn app.worker_main:app --reload --port 8000
 ```
 
-## Endpoints (MVP)
-- `POST /ingest` (local path or remote git URL)
-- `POST /query` (question + repo id)
-- `GET /function/{name}` (basic lookup)
-- `POST /graph/explore` (simple neighborhood expansion)
+### 2. Setup Node.js Orchestrator
+Open a new terminal:
+```bash
+cd orchestrator
+npm install
+copy .env.example .env
+```
+Ensure your orchestrator `.env` has `MONGO_URI`, `NEO4J_URI`, and points `PYTHON_WORKER_URL=http://localhost:8000`.
+Start the orchestrator:
+```bash
+npm run dev
+# Runs on http://localhost:5000
+```
 
+### 3. Setup React Frontend
+Open a third terminal:
+```bash
+cd frontend
+npm install
+npm run dev
+# Runs on http://localhost:5173
+```
+
+## Features
+- **Incremental Indexing**: The Node.js orchestrator hashes files and only sends modified/added/deleted files to the Python worker, making re-indexing extremely fast.
+- **Semantic FQNs**: Nodes in Neo4j use Fully Qualified Names (e.g., `file.py::Class.method`) to ensure idempotent updates.
+- **LangGraph Agent**: The query interface uses an autonomous StateGraph loop that can trigger tools like `get_definition`, `get_callers`, and `expand_graph_neighborhood`.
+- **Interactive UI**: A Vercel/Linear-inspired interface featuring a 2D canvas of your actual code topology.

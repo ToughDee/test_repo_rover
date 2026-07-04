@@ -5,8 +5,10 @@ from pydantic import BaseModel, Field
 
 class IngestRequest(BaseModel):
     repo_id: str = Field(..., description="Stable id to reference this repo later")
-    source: str = Field(..., description="Local path or remote git URL")
+    source: str = Field(..., description="Local path or remote git URL", alias="sourceUrl")
     branch: str | None = Field(None, description="Optional branch for remote repos")
+    added_or_modified_files: list[str] = Field(default_factory=list, alias="addedOrModifiedFiles")
+    deleted_files: list[str] = Field(default_factory=list, alias="deletedFiles")
 
 
 class IngestResponse(BaseModel):

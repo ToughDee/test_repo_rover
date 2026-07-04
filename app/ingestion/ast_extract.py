@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tree_sitter import Node
 from tree_sitter_languages import get_parser
-
+from app.ingestion.import_resolver import resolve_import
 
 @dataclass(frozen=True)
 class Symbol:
@@ -65,11 +65,26 @@ def _collect_calls_within(src: bytes, scope: Node) -> list[str]:
     return calls
 
 
-def extract_symbols(file_path: Path, repo_id: str, repo_root: Path) -> tuple[list[Symbol], str, list[str]]:
+def _build_fqn(src: bytes, rel_path: str, node: Node, name_guess: str) -> str:
+    """Builds a semantic Fully Qualified Name (e.g. file.py::ClassName.method_name)."""
+    parts = [name_guess]
+    curr = node.parent
+    while curr:
+        if curr.type in {"class_definition", "class_declaration", "function_definition", "function_declaration"}:
+            name_node = _first_named_child(curr, "identifier") or _first_named_child(curr, "name")
+            if name_node:
+                parts.append(_text(src, name_node).strip())
+        curr = curr.parent
+    parts.reverse()
+    symbol_path = ".".join(parts)
+    return f"{rel_path}::{symbol_path}"
+
+
+def extract_symbols(file_path: Path, repo_id: str, repo_root: Path) -> tuple[list[Symbol], str, list[str], list[str], set[str]]:
     ext = file_path.suffix.lower()
     lang = EXT_TO_LANG.get(ext)
     if not lang:
-        return ([], "", [])
+        return ([], "", [], [], set())
 
     src = file_path.read_bytes()
     parser = get_parser(lang)
@@ -104,15 +119,18 @@ def extract_symbols(file_path: Path, repo_id: str, repo_root: Path) -> tuple[lis
         },
     )
     imports: list[str] = []
+    resolved_imports: list[str] = []
     for n in import_nodes:
         snippet = _text(src, n).strip()
         if snippet:
             imports.append(snippet[:300])
+        # Resolve the import to its FQN target
+        resolved = resolve_import(lang, repo_root, rel_path, n, src)
+        resolved_imports.extend(resolved)
 
     # Create symbols with per-symbol calls/imports for now (simple MVP)
     def add_symbol(kind: str, node: Node, name_guess: str) -> None:
-        # Include a stable span component to avoid collisions (e.g. many anonymous functions)
-        qn = f"{rel_path}::{name_guess}::{node.start_byte}"
+        qn = _build_fqn(src, rel_path, node, name_guess)
         per_symbol_calls = _collect_calls_within(src, node) if kind == "function" else []
         symbols.append(
             Symbol(
@@ -155,5 +173,13 @@ def extract_symbols(file_path: Path, repo_id: str, repo_root: Path) -> tuple[lis
         name_guess = _text(src, name_node).strip() if name_node else "AnonymousClass"
         add_symbol("class", cn, name_guess)
 
+    # Extract all identifiers for Mentions tracking (AST-based rather than Regex)
+    ident_nodes = _collect(root, {"identifier"})
+    identifiers: set[str] = set()
+    for n in ident_nodes:
+        ident_text = _text(src, n).strip()
+        if ident_text:
+            identifiers.add(ident_text)
+
     file_text = src.decode("utf-8", errors="ignore")
-    return (symbols, file_text, imports)
+    return (symbols, file_text, imports, resolved_imports, identifiers)
